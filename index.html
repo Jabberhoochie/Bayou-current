@@ -33,7 +33,7 @@ input[type=range],select{width:100%;min-height:36px;font:inherit;accent-color:va
 <div><label for="wd">Wind from</label> <span class="muted" id="wl"></span>
 <select id="wd"><option>N</option><option>NE</option><option>E</option><option selected>SE</option><option>S</option><option>SW</option><option>W</option><option>NW</option></select>
 <input type="range" id="ws" min="0" max="30" value="8" aria-label="Wind speed"></div>
-<div class="note">Use the layer button (top right) to switch between high-res satellite, NASA true color (yesterday, 250 m, shows the muddy river-water edge offshore), a NOAA chart, and sea surface temperature. The dashed line is roughly 30 miles offshore. Arrows use made-up sample flow; positions of the inland and offshore spots are approximate. Click any arrow for details.</div>
+<div class="muted" id="st">Loading live data…</div><div class="note">Passes show live NOAA data when the time slider is on Now; other spots and times use sample numbers. Use the layer button (top right) to switch between high-res satellite, NASA true color (yesterday, 250 m, shows the muddy river-water edge offshore), a NOAA chart, and sea surface temperature. The dashed line is roughly 30 miles offshore. Arrows use made-up sample flow; positions of the inland and offshore spots are approximate. Click any arrow for details.</div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
@@ -48,8 +48,8 @@ sat.addTo(map);
 L.control.layers({"Satellite (high res)":sat,"NASA true color (yesterday)":vi,"NOAA chart":chart},{"Sea surface temperature":sst},{collapsed:false}).addTo(map);
 L.polyline([[29.33,-94.6],[29.33,-92.4]],{color:"#fff",weight:2,dashArray:"8 8"}).addTo(map).bindTooltip("about 30 miles offshore",{permanent:true,direction:"top",offset:[0,-4]});
 var S=[
-{n:"Calcasieu Pass",ll:[29.768,-93.343],a:-82,amp:1.4,k:1.0,ph:0,src:"Measured station"},
-{n:"Sabine Pass",ll:[29.728,-93.870],a:-92,amp:1.5,k:1.0,ph:.5,src:"Measured station"},
+{id:"8768094",n:"Calcasieu Pass",ll:[29.768,-93.343],a:-82,amp:1.4,k:1.0,ph:0,src:"Measured station"},
+{id:"8770570",n:"Sabine Pass",ll:[29.728,-93.870],a:-92,amp:1.5,k:1.0,ph:.5,src:"Measured station"},
 {n:"Ship channel (approx.)",ll:[29.93,-93.30],a:-90,amp:.7,k:.6,ph:3,src:"Modeled"},
 {n:"Nearshore Gulf, ~10 mi",ll:[29.60,-93.40],a:-90,amp:.25,k:1.1,ph:1.5,src:"Modeled"},
 {n:"Offshore, ~30 mi",ll:[29.33,-93.45],a:-90,amp:.15,k:1.3,ph:2,src:"Modeled"}];
@@ -60,17 +60,21 @@ function dt(v){return Math.abs(v)<.1?"Slack":v>0?"Incoming":"Outgoing"}
 function draw(){
 layer.clearLayers();var t=T0+off;
 S.forEach(function(s){
-var tv=tide(s,t),v=tv+wind(s),flip=Math.abs(v)>.1&&(tv>=0)!==(v>=0);
+var tv=tide(s,t),v=tv+wind(s),flip=Math.abs(v)>.1&&(tv>=0)!==(v>=0),L0=off===0&&s.id&&live&&live[s.id];
+if(L0){var tr=L0.trend,r=tr.observed_ft_per_hr;v=r==null?0:r*4;flip=tr.wind_overriding;tv=(tr.predicted_ft_per_hr||0)*4}
 var ang=v>=0?s.a:s.a+180,L2=18+Math.min(Math.abs(v),2)*24,c=v>=0?"var(--in)":"var(--out)";
 var svg=Math.abs(v)<.1?'<circle r="14" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="3 3"/>':
 '<g transform="rotate('+ang+')"><line x1="'+(-L2/2)+'" x2="'+(L2/2)+'" stroke="#000" stroke-width="9" stroke-linecap="round" opacity=".45"/><line class="flow" x1="'+(-L2/2)+'" x2="'+(L2/2)+'" stroke="'+c+'" stroke-width="5" stroke-linecap="round"/><polygon points="'+(L2/2+10)+',0 '+(L2/2-3)+',-9 '+(L2/2-3)+',9" fill="'+c+'" stroke="#000" stroke-opacity=".45"/></g>';
 var ic=L.divIcon({className:"arrow",iconSize:[0,0],html:'<svg width="1" height="1">'+svg+'<circle r="5" fill="#fff" stroke="#000" stroke-width="1.5"/></svg>'});
-var pop="<b>"+s.n+"</b><br>"+dt(v)+(Math.abs(v)<.1?"":" "+Math.abs(v).toFixed(1)+" kt")+"<br>Tide table says: "+dt(tv)+(flip?"<br><b>Wind is overriding the tide.</b>":"")+"<br><i>"+s.src+" (sample numbers)</i>";
+var pop="<b>"+s.n+"</b><br>"+dt(v)+(Math.abs(v)<.1?"":" "+Math.abs(v).toFixed(1)+" kt")+"<br>Tide table says: "+dt(tv)+(flip?"<br><b>Wind is overriding the tide.</b>":"")+"<br><i>"+(L0?"Live NOAA: water "+L0.latest.level_ft+" ft, "+(L0.latest.residual_ft>0?"+":"")+L0.latest.residual_ft+" ft vs tide table. Speed is a rough estimate from how fast the water level is changing.":s.src+" (sample numbers)")+"</i>";
 L.marker(s.ll,{icon:ic,keyboard:true,title:s.n}).bindPopup(pop).bindTooltip(s.n,{direction:"right",offset:[14,0]}).addTo(layer)});
 document.getElementById("tl").textContent=(off?(off>0?"+":"")+off+" h · ":"Now · ")+new Date(t*36e5).toLocaleString([],{weekday:"short",hour:"numeric",minute:"2-digit"});
 document.getElementById("wl").textContent=document.getElementById("ws").value+" mph"}
 document.getElementById("tm").oninput=function(){off=+this.value;draw()};
 document.getElementById("wd").onchange=draw;document.getElementById("ws").oninput=draw;
+var live=null;
+function status(m){document.getElementById("st").textContent=m}
+fetch("latest.json?"+Date.now()).then(function(r){return r.json()}).then(function(d){live={};d.stations.forEach(function(x){live[x.id]=x});status("Live NOAA data for the passes · updated "+Math.round((Date.now()-Date.parse(d.fetched_at))/6e4)+" min ago");draw()}).catch(function(){status("Sample data only (live feed not found)")});
 draw();
 </script>
 </body>
