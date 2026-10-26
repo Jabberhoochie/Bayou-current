@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bayou Current – offshore map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--card:#fbfdfb;--ink:#14262d;--muted:#55686f;--line:#c5d1c8;--in:#0a6e8a;--out:#c0307a}
+@media (prefers-color-scheme:dark){:root{--card:#122026;--ink:#e4eef0;--muted:#8fa5ab;--line:#25393f;--in:#54c7e8;--out:#ff7ab8}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:"Barlow Semi Condensed","Arial Narrow",Arial,sans-serif;color:var(--ink);display:flex;flex-direction:column}
+#map{flex:1;min-height:300px;background:#0e2c3b}
+#bar{background:var(--card);border-top:1px solid var(--line);padding:10px 14px;display:grid;gap:8px;grid-template-columns:1fr;max-height:45vh;overflow:auto}
+@media(min-width:800px){#bar{grid-template-columns:1fr 1fr 1.2fr}}
+label{font-weight:600}
+input[type=range],select{width:100%;min-height:36px;font:inherit;accent-color:var(--in)}
+.muted{color:var(--muted);font-size:14px}
+.in{color:var(--in)}.out{color:var(--out)}
+.note{font-size:12px;color:var(--muted)}
+.leaflet-popup-content{font-family:inherit;margin:10px 12px;color:#14262d}
+.arrow svg{overflow:visible}
+.flow{stroke-dasharray:7 6;animation:dash .9s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-26}}
+@media(prefers-reduced-motion:reduce){.flow{animation:none}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar">
+<div><label for="tm">Time</label> <span class="muted" id="tl"></span><input type="range" id="tm" min="-12" max="36" step="0.5" value="0"></div>
+<div><label for="wd">Wind from</label> <span class="muted" id="wl"></span>
+<select id="wd"><option>N</option><option>NE</option><option>E</option><option selected>SE</option><option>S</option><option>SW</option><option>W</option><option>NW</option></select>
+<input type="range" id="ws" min="0" max="30" value="8" aria-label="Wind speed"></div>
+<div class="note">Use the layer button (top right) to switch between high-res satellite, NASA true color (yesterday, 250 m, shows the muddy river-water edge offshore), a NOAA chart, and sea surface temperature. The dashed line is roughly 30 miles offshore. Arrows use made-up sample flow; positions of the inland and offshore spots are approximate. Click any arrow for details.</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+var yday=new Date(Date.now()-864e5).toISOString().slice(0,10);
+var gibs=function(layer,set,ext,z){return "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"+layer+"/default/"+yday+"/"+set+"/{z}/{y}/{x}."+ext};
+var map=L.map("map",{maxBounds:[[29.0,-94.6],[30.5,-92.4]],minZoom:8,maxZoom:15}).setView([29.58,-93.45],9);
+var sat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxNativeZoom:15,attribution:"Imagery © Esri and contributors"});
+var vi=L.tileLayer(gibs("VIIRS_SNPP_CorrectedReflectance_TrueColor","GoogleMapsCompatible_Level9","jpg"),{maxNativeZoom:9,attribution:"NASA GIBS / VIIRS"});
+var chart=L.tileLayer("https://tileservice.charts.noaa.gov/tiles/50000_1/{z}/{x}/{y}.png",{maxNativeZoom:12,attribution:"NOAA Office of Coast Survey"});
+var sst=L.tileLayer(gibs("GHRSST_L4_MUR_Sea_Surface_Temperature","GoogleMapsCompatible_Level7","png"),{maxNativeZoom:7,opacity:.65,attribution:"NASA GIBS / MUR SST"});
+sat.addTo(map);
+L.control.layers({"Satellite (high res)":sat,"NASA true color (yesterday)":vi,"NOAA chart":chart},{"Sea surface temperature":sst},{collapsed:false}).addTo(map);
+L.polyline([[29.33,-94.6],[29.33,-92.4]],{color:"#fff",weight:2,dashArray:"8 8"}).addTo(map).bindTooltip("about 30 miles offshore",{permanent:true,direction:"top",offset:[0,-4]});
+var S=[
+{n:"Calcasieu Pass",ll:[29.768,-93.343],a:-82,amp:1.4,k:1.0,ph:0,src:"Measured station"},
+{n:"Sabine Pass",ll:[29.728,-93.870],a:-92,amp:1.5,k:1.0,ph:.5,src:"Measured station"},
+{n:"Ship channel (approx.)",ll:[29.93,-93.30],a:-90,amp:.7,k:.6,ph:3,src:"Modeled"},
+{n:"Nearshore Gulf, ~10 mi",ll:[29.60,-93.40],a:-90,amp:.25,k:1.1,ph:1.5,src:"Modeled"},
+{n:"Offshore, ~30 mi",ll:[29.33,-93.45],a:-90,amp:.15,k:1.3,ph:2,src:"Modeled"}];
+var WD={N:90,NE:135,E:180,SE:-135,S:-90,SW:-45,W:0,NW:45},T0=Date.now()/36e5,off=0,layer=L.layerGroup().addTo(map);
+function tide(s,t){var u=t-s.ph;return s.amp*(.75*Math.sin(2*Math.PI*u/24.84)+.35*Math.sin(2*Math.PI*u/12.42))}
+function wind(s){var d=document.getElementById("wd").value,sp=+document.getElementById("ws").value;return .045*sp*s.k*Math.cos((WD[d]-s.a)*Math.PI/180)}
+function dt(v){return Math.abs(v)<.1?"Slack":v>0?"Incoming":"Outgoing"}
+function draw(){
+layer.clearLayers();var t=T0+off;
+S.forEach(function(s){
+var tv=tide(s,t),v=tv+wind(s),flip=Math.abs(v)>.1&&(tv>=0)!==(v>=0);
+var ang=v>=0?s.a:s.a+180,L2=18+Math.min(Math.abs(v),2)*24,c=v>=0?"var(--in)":"var(--out)";
+var svg=Math.abs(v)<.1?'<circle r="14" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="3 3"/>':
+'<g transform="rotate('+ang+')"><line x1="'+(-L2/2)+'" x2="'+(L2/2)+'" stroke="#000" stroke-width="9" stroke-linecap="round" opacity=".45"/><line class="flow" x1="'+(-L2/2)+'" x2="'+(L2/2)+'" stroke="'+c+'" stroke-width="5" stroke-linecap="round"/><polygon points="'+(L2/2+10)+',0 '+(L2/2-3)+',-9 '+(L2/2-3)+',9" fill="'+c+'" stroke="#000" stroke-opacity=".45"/></g>';
+var ic=L.divIcon({className:"arrow",iconSize:[0,0],html:'<svg width="1" height="1">'+svg+'<circle r="5" fill="#fff" stroke="#000" stroke-width="1.5"/></svg>'});
+var pop="<b>"+s.n+"</b><br>"+dt(v)+(Math.abs(v)<.1?"":" "+Math.abs(v).toFixed(1)+" kt")+"<br>Tide table says: "+dt(tv)+(flip?"<br><b>Wind is overriding the tide.</b>":"")+"<br><i>"+s.src+" (sample numbers)</i>";
+L.marker(s.ll,{icon:ic,keyboard:true,title:s.n}).bindPopup(pop).bindTooltip(s.n,{direction:"right",offset:[14,0]}).addTo(layer)});
+document.getElementById("tl").textContent=(off?(off>0?"+":"")+off+" h · ":"Now · ")+new Date(t*36e5).toLocaleString([],{weekday:"short",hour:"numeric",minute:"2-digit"});
+document.getElementById("wl").textContent=document.getElementById("ws").value+" mph"}
+document.getElementById("tm").oninput=function(){off=+this.value;draw()};
+document.getElementById("wd").onchange=draw;document.getElementById("ws").oninput=draw;
+draw();
+</script>
+</body>
+</html>
